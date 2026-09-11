@@ -42,6 +42,35 @@ void sigint_handler(int signal) {
     _exit(signal);
 }
 
+int handle_pgm(Pgm *prog) {
+    if (prog == NULL)
+    {
+      return 0;
+    }
+    else
+    {
+        // recurse and call the next program which would be the process piping in information to this one
+        handle_pgm(prog->next);
+
+        char** pgmlist = prog->pgmlist;
+        char* cmd = pgmlist[0];
+        pid_t p = fork();
+        if (p < 0) {
+          printf("Fork failed");
+          return 1;
+        }
+        else if (p == 0) {
+          // call the desired command in a child process with the desired arguments
+          execvp(cmd, pgmlist);
+        }
+        else {
+          wait(NULL);
+        }
+    }
+
+    return 0;
+}
+
 int main(void)
 {
   // setup signal handlers
@@ -70,29 +99,9 @@ int main(void)
       {
         printf("Parse ERROR\n");
       }
-      Pgm* pgms = cmd.pgm;
-      Pgm* next = pgms->next;
-      while(pgms != NULL) {
 
-        char** pgmlist = pgms->pgmlist;
-        char* cmd = pgmlist[0];
-        pid_t p = fork();
-        if (p < 0) {
-          printf("Fork failed");
-          return 1;
-        }
-        else if (p == 0) {
-
-          execvp(cmd, pgmlist);
-        }
-        else {
-          wait(NULL);
-        }
-
-        pgms = next;
-        if (pgms != NULL)
-          next = pgms->next;
-      }
+      // recursively handle the desired programs to be executed
+      handle_pgm(cmd.pgm);
     }
 
     // Free the input buffer
