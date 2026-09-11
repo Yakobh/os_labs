@@ -66,24 +66,27 @@ int main(void)
       Pgm* next = pgms->next;
       while(pgms != NULL) {
         char** pgmlist = pgms->pgmlist;
-        int i = 0;
-        char* curr_pgm = pgmlist[i];
-
-        while (curr_pgm != NULL) {
-          pid_t p = fork();
-          if (p < 0) {
-            printf("Fork failed");
-            return 1;
-          }
-          else if (p == 0) {
-            execvp(curr_pgm, NULL);
-          }
-          else {
-            wait(NULL);
-          }
-          i++;
-          curr_pgm = pgmlist[i];
+        char* cmd = pgmlist[0];
+        char** cmd_args;
+        if (pgmlist[1] != NULL)
+        {
+          cmd_args = &pgmlist[1];
+          printf(cmd_args[0]);
         }
+        
+        pid_t p = fork();
+        if (p < 0) {
+          printf("Fork failed");
+          return 1;
+        }
+        else if (p == 0) {
+          
+          execvp(cmd, cmd_args);
+        }
+        else {
+          wait(NULL);
+        }
+
         pgms = next;
         if (pgms != NULL) 
           next = pgms->next;
