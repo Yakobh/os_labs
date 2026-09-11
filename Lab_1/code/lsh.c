@@ -25,6 +25,7 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
@@ -38,8 +39,17 @@ static void print_cmd(Command *cmd);
 static void print_pgm(Pgm *p);
 void stripwhite(char *);
 
+// Helpful constants
+// useradd manpage specifies 32 bytes as max length for username
+#define MAX_USERNAME_LEN 32
+#define PROMPT_MAX_LEN MAXPATHLEN + MAX_USERNAME_LEN
+
 void sigint_handler(int signal) {
     _exit(signal);
+}
+
+int handle_chdir(char * destdir) {
+    chdir(destdir);
 }
 
 int handle_pgm(Pgm *prog) {
@@ -60,8 +70,13 @@ int handle_pgm(Pgm *prog) {
           return 1;
         }
         else if (p == 0) {
-          // call the desired command in a child process with the desired arguments
-          execvp(cmd, pgmlist);
+          // check for built-ins
+          if (strcmp("cd", cmd) == 0)
+              chdir(pgmlist[1]); // NOTE: pgmlist is a buffer of 50 so we are safe to check index 1 here
+          else {
+              // call the desired command in a child process with the desired arguments
+              execvp(cmd, pgmlist);
+          }
         }
         else {
           wait(NULL);
@@ -79,7 +94,16 @@ int main(void)
   for (;;)
   {
     char *line;
-    line = readline("> ");
+
+    // collect information for the shell prompt
+    char prompt[PROMPT_MAX_LEN];
+    char cwd_buf[MAXPATHLEN];
+
+    char *currentuser = getlogin();
+    getcwd(cwd_buf, MAXPATHLEN);
+    snprintf(prompt, PROMPT_MAX_LEN, "%s %s> ", currentuser, cwd_buf);
+
+    line = readline(prompt);
 
     // Remove leading and trailing whitespace from the line
     stripwhite(line);
