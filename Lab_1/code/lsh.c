@@ -18,6 +18,7 @@
  */
 #include <assert.h>
 #include <ctype.h>
+#include <err.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,52 +45,92 @@ void stripwhite(char *);
 #define MAX_USERNAME_LEN 32
 #define PROMPT_MAX_LEN MAXPATHLEN + MAX_USERNAME_LEN
 
+#define PIPE_READ 0
+#define PIPE_WRITE 1
+
 void sigint_handler(int signal) {
     _exit(signal);
 }
 
-int handle_chdir(char * destdir) {
-    chdir(destdir);
+void _close(int fd) {
+    if (close(fd) == -1) {
+        err(EXIT_FAILURE, "close");
+    }
 }
 
-int handle_pgm(Pgm *prog) {
+int handle_pgm(Pgm *prog, int cmd_idx) {
+    int pipefd[2];
     if (prog == NULL)
     {
-      return 0;
+      return cmd_idx;
     }
     else
     {
         // recurse and call the next program which would be the process piping in information to this one
-        handle_pgm(prog->next);
+        int this_cmd_idx = handle_pgm(prog->next, cmd_idx + 1);
 
         char** pgmlist = prog->pgmlist;
         char* cmd = pgmlist[0];
-        pid_t p = fork();
-        if (p < 0) {
-          printf("Fork failed");
-          return 1;
-        }
-        else if (p == 0) {
-          // check for built-ins
-          if (strcmp("cd", cmd) == 0)
-              chdir(pgmlist[1]); // NOTE: pgmlist is a buffer of 50 so we are safe to check index 1 here
-          else {
-              // call the desired command in a child process with the desired arguments
-              execvp(cmd, pgmlist);
-          }
-        }
+
+        // check for built-ins
+        if (strcmp("cd", cmd) == 0)
+            chdir(pgmlist[1]); // NOTE: pgmlist is a buffer of 50 so we are safe to check index 1 here
+        else if (strcmp("exit", cmd) == 0)
+            exit(0);
+
+        // run the desired command that isn't a shell built-in
         else {
-          wait(NULL);
+            // we only want to create a pipe if we are not the last command in the list
+            if (this_cmd_idx > 1) {
+                if (pipe(pipefd) == -1) {
+                    err(EXIT_FAILURE, "pipe");
+                }
+            }
+
+            // spawn the child process
+            pid_t p = fork();
+            if (p < 0) {
+                err(EXIT_FAILURE, "fork");
+            }
+            // Child Process
+            else if (p == 0) {
+                // close read end of the pipe
+                if (this_cmd_idx > 1) {
+                    _close(pipefd[PIPE_READ]);
+                    if (dup2(pipefd[PIPE_WRITE], STDOUT_FILENO) == -1)
+                        err(EXIT_FAILURE, "dup2");
+                    _close(pipefd[PIPE_WRITE]);
+                }
+
+                // call the desired command in a child process with the desired arguments
+                execvp(cmd, pgmlist);
+            }
+            // Parent Process (we will be reading data from the spawned process here)
+            else {
+                // close write end of the pipe
+                if (this_cmd_idx > 1) {
+                    _close(pipefd[PIPE_WRITE]);
+                    if (dup2(pipefd[PIPE_READ], STDIN_FILENO) == -1)
+                        err(EXIT_FAILURE, "dup2");
+                    _close(pipefd[PIPE_READ]);
+                }
+                wait(NULL);
+            }
         }
     }
 
-    return 0;
+    return cmd_idx;
 }
 
 int main(void)
 {
   // setup signal handlers
   signal(SIGINT, sigint_handler);
+
+  // keep track of the initial STDIN and STDOUT file descriptors
+  int STDIN_ORIG, STDOUT_ORIG;
+  STDIN_ORIG = dup(STDIN_FILENO);
+  STDOUT_ORIG = dup(STDOUT_FILENO);
 
   for (;;)
   {
@@ -107,7 +148,7 @@ int main(void)
 
     // line will return NULL on Ctrl+D (EOF)
     if (line == NULL) {
-        _exit(0);
+        exit(0);
     }
 
     // Remove leading and trailing whitespace from the line
@@ -130,7 +171,11 @@ int main(void)
       }
 
       // recursively handle the desired programs to be executed
-      handle_pgm(cmd.pgm);
+      handle_pgm(cmd.pgm, 0);
+
+      // reset the STDIN and STDOUT for this process
+      dup2(STDIN_ORIG, STDIN_FILENO);
+      dup2(STDOUT_ORIG, STDOUT_FILENO);
     }
 
     // Free the input buffer
