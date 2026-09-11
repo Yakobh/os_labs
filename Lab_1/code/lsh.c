@@ -48,8 +48,11 @@ void stripwhite(char *);
 #define PIPE_READ 0
 #define PIPE_WRITE 1
 
-void sigint_handler(int signal) {
-    _exit(signal);
+void sigint_handler(int _signal) {
+    // terminate the current child process instead of killing the shell
+    // we shouldn't need to actually do anything here, SIGINT should be
+    // passed along to all child processes so this empty handler will
+    // just simply ignore the SIGINT signal
 }
 
 void _close(int fd) {
