@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 
@@ -37,8 +38,15 @@ static void print_cmd(Command *cmd);
 static void print_pgm(Pgm *p);
 void stripwhite(char *);
 
+void sigint_handler(int signal) {
+    _exit(signal);
+}
+
 int main(void)
 {
+  // setup signal handlers
+  signal(SIGINT, sigint_handler);
+
   for (;;)
   {
     char *line;
@@ -67,28 +75,22 @@ int main(void)
       while(pgms != NULL) {
         char** pgmlist = pgms->pgmlist;
         char* cmd = pgmlist[0];
-        char** cmd_args;
-        if (pgmlist[1] != NULL)
-        {
-          cmd_args = &pgmlist[1];
-          printf(cmd_args[0]);
-        }
-        
+
         pid_t p = fork();
         if (p < 0) {
           printf("Fork failed");
           return 1;
         }
         else if (p == 0) {
-          
-          execvp(cmd, cmd_args);
+
+          execvp(cmd, pgmlist);
         }
         else {
           wait(NULL);
         }
 
         pgms = next;
-        if (pgms != NULL) 
+        if (pgms != NULL)
           next = pgms->next;
       }
     }
