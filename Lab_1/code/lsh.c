@@ -73,9 +73,9 @@ int main(void)
       Pgm* pgms = cmd.pgm;
       Pgm* next = pgms->next;
       while(pgms != NULL) {
+
         char** pgmlist = pgms->pgmlist;
         char* cmd = pgmlist[0];
-
         pid_t p = fork();
         if (p < 0) {
           printf("Fork failed");
