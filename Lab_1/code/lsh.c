@@ -105,6 +105,11 @@ int main(void)
 
     line = readline(prompt);
 
+    // line will return NULL on Ctrl+D (EOF)
+    if (line == NULL) {
+        _exit(0);
+    }
+
     // Remove leading and trailing whitespace from the line
     stripwhite(line);
 
