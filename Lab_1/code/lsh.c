@@ -39,7 +39,7 @@ static void print_pgm(Pgm *p);
 void stripwhite(char *);
 
 void sigint_handler(int signal) {
-    _exit(signal);
+    // _exit(signal);
 }
 
 int handle_pgm(Pgm *prog) {
@@ -71,6 +71,29 @@ int handle_pgm(Pgm *prog) {
     return 0;
 }
 
+int builtin_cd(char **argv) {
+  const char *target = argv[1];
+
+  if (target == NULL) {
+    target = getenv("HOME");
+    if (target == NULL) {
+      fprintf(stderr, "cd: HOME not set\n");
+      return 1;
+    }
+  }
+
+  if (chdir(target) != 0) {
+    perror("cd");
+    return 1;
+  }
+
+  return 0;
+}
+
+int builtin_exit(void) {
+  exit(0);
+}
+
 int main(void)
 {
   // setup signal handlers
@@ -100,8 +123,22 @@ int main(void)
         printf("Parse ERROR\n");
       }
 
-      // recursively handle the desired programs to be executed
-      handle_pgm(cmd.pgm);
+      if (parse(line, &cmd) == 1) {
+        Pgm *p = cmd.pgm;
+
+        if (p != NULL && p->pgmlist != NULL && p->pgmlist[0] != NULL) {
+          if (strcmp(p->pgmlist[0], "cd") == 0) {
+            builtin_cd(p->pgmlist);
+          }
+          else if (strcmp(p->pgmlist[0], "exit") == 0) {
+            builtin_exit();
+          }
+          else {
+            // recursively handle the desired programs to be executed
+            handle_pgm(p);
+          }
+        }
+      }
     }
 
     // Free the input buffer
