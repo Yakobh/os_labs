@@ -21,7 +21,7 @@ Your shell, `lsh`, must meet the following functional specifications:
 
 [x] 6. **Built-ins**: Provide `cd` and `exit` as built-in functions.
 
-7. **Ctrl-C Handling**: Ctrl-C should terminate the current foreground process but not the shell itself.
+[x] 7. **Ctrl-C Handling**: Ctrl-C should terminate the current foreground process but not the shell itself.
                         Ctrl-C should not affect background jobs.
 
 8. **No Zombies**: Your shell should not leave any zombie processes behind.

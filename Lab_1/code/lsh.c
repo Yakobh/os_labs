@@ -61,7 +61,8 @@ void _close(int fd) {
     }
 }
 
-int handle_pgm(Pgm *prog, int cmd_idx) {
+int handle_pgm(Pgm *prog, int cmd_idx, Command *cmd) {
+    int background = cmd->background;
     int pipefd[2];
     if (prog == NULL)
     {
@@ -70,7 +71,7 @@ int handle_pgm(Pgm *prog, int cmd_idx) {
     else
     {
         // recurse and call the next program which would be the process piping in information to this one
-        int this_cmd_idx = handle_pgm(prog->next, cmd_idx + 1);
+        int this_cmd_idx = handle_pgm(prog->next, cmd_idx + 1, cmd);
 
         char** pgmlist = prog->pgmlist;
         char* cmd = pgmlist[0];
@@ -97,6 +98,10 @@ int handle_pgm(Pgm *prog, int cmd_idx) {
             }
             // Child Process
             else if (p == 0) {
+                // set the process group id to move this process into a different group that will be in the background
+                if (background){
+                    setpgid(0, 0);
+                }
                 // close read end of the pipe
                 if (this_cmd_idx > 1) {
                     _close(pipefd[PIPE_READ]);
@@ -117,7 +122,8 @@ int handle_pgm(Pgm *prog, int cmd_idx) {
                         err(EXIT_FAILURE, "dup2");
                     _close(pipefd[PIPE_READ]);
                 }
-                wait(NULL);
+                if (!background)
+                    wait(NULL);
             }
         }
     }
@@ -166,7 +172,7 @@ int main(void)
       if (parse(line, &cmd) == 1)
       {
         // Print the parsed command
-        print_cmd(&cmd);
+        //print_cmd(&cmd);
       }
       else
       {
@@ -174,7 +180,7 @@ int main(void)
       }
 
       // recursively handle the desired programs to be executed
-      handle_pgm(cmd.pgm, 0);
+      handle_pgm(cmd.pgm, 0, &cmd);
 
       // reset the STDIN and STDOUT for this process
       dup2(STDIN_ORIG, STDIN_FILENO);
