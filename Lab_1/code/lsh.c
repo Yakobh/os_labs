@@ -18,6 +18,7 @@
  */
 #include <assert.h>
 #include <ctype.h>
+#include <err.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +26,7 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
@@ -38,60 +40,100 @@ static void print_cmd(Command *cmd);
 static void print_pgm(Pgm *p);
 void stripwhite(char *);
 
-void sigint_handler(int signal) {
-    // _exit(signal);
+// Helpful constants
+// useradd manpage specifies 32 bytes as max length for username
+#define MAX_USERNAME_LEN 32
+#define PROMPT_MAX_LEN MAXPATHLEN + MAX_USERNAME_LEN
+
+#define PIPE_READ 0
+#define PIPE_WRITE 1
+
+void sigint_handler(int _signal) {
+    // terminate the current child process instead of killing the shell
+    // we shouldn't need to actually do anything here, SIGINT should be
+    // passed along to all child processes so this empty handler will
+    // just simply ignore the SIGINT signal
 }
 
-int handle_pgm(Pgm *prog) {
+void _close(int fd) {
+    if (close(fd) == -1) {
+        err(EXIT_FAILURE, "close");
+    }
+}
+
+int handle_pgm(Pgm *prog, int cmd_idx) {
+    int pipefd[2];
     if (prog == NULL)
     {
-      return 0;
+      return cmd_idx;
     }
     else
     {
         // recurse and call the next program which would be the process piping in information to this one
-        handle_pgm(prog->next);
+        int this_cmd_idx = handle_pgm(prog->next, cmd_idx + 1);
 
         char** pgmlist = prog->pgmlist;
         char* cmd = pgmlist[0];
-        pid_t p = fork();
-        if (p < 0) {
-          printf("Fork failed");
-          return 1;
+        const char* target = pgmlist[1];
+
+        // check for built-ins
+        if (strcmp("cd", cmd) == 0) {
+          // cd without an argument should redirect to HOME
+          if (target == NULL) {
+            target = getenv("HOME");
+            if (target == NULL) {
+              fprintf(stderr, "cd: HOME not set\n");
+              return 1;
+            }
+          }
+          chdir(target); // NOTE: pgmlist is a buffer of 50 so we are safe to check index 1 here
         }
-        else if (p == 0) {
-          // call the desired command in a child process with the desired arguments
-          execvp(cmd, pgmlist);
+        else if (strcmp("exit", cmd) == 0) {
+            exit(0);
         }
+
+        // run the desired command that isn't a shell built-in
         else {
-          wait(NULL);
+            // we only want to create a pipe if we are not the last command in the list
+            if (this_cmd_idx > 1) {
+                if (pipe(pipefd) == -1) {
+                    err(EXIT_FAILURE, "pipe");
+                }
+            }
+
+            // spawn the child process
+            pid_t p = fork();
+            if (p < 0) {
+                err(EXIT_FAILURE, "fork");
+            }
+            // Child Process
+            else if (p == 0) {
+                // close read end of the pipe
+                if (this_cmd_idx > 1) {
+                    _close(pipefd[PIPE_READ]);
+                    if (dup2(pipefd[PIPE_WRITE], STDOUT_FILENO) == -1)
+                        err(EXIT_FAILURE, "dup2");
+                    _close(pipefd[PIPE_WRITE]);
+                }
+
+                // call the desired command in a child process with the desired arguments
+                execvp(cmd, pgmlist);
+            }
+            // Parent Process (we will be reading data from the spawned process here)
+            else {
+                // close write end of the pipe
+                if (this_cmd_idx > 1) {
+                    _close(pipefd[PIPE_WRITE]);
+                    if (dup2(pipefd[PIPE_READ], STDIN_FILENO) == -1)
+                        err(EXIT_FAILURE, "dup2");
+                    _close(pipefd[PIPE_READ]);
+                }
+                wait(NULL);
+            }
         }
     }
 
-    return 0;
-}
-
-int builtin_cd(char **argv) {
-  const char *target = argv[1];
-
-  if (target == NULL) {
-    target = getenv("HOME");
-    if (target == NULL) {
-      fprintf(stderr, "cd: HOME not set\n");
-      return 1;
-    }
-  }
-
-  if (chdir(target) != 0) {
-    perror("cd");
-    return 1;
-  }
-
-  return 0;
-}
-
-int builtin_exit(void) {
-  exit(0);
+    return cmd_idx;
 }
 
 int main(void)
@@ -99,10 +141,30 @@ int main(void)
   // setup signal handlers
   signal(SIGINT, sigint_handler);
 
+  // keep track of the initial STDIN and STDOUT file descriptors
+  int STDIN_ORIG, STDOUT_ORIG;
+  STDIN_ORIG = dup(STDIN_FILENO);
+  STDOUT_ORIG = dup(STDOUT_FILENO);
+
   for (;;)
   {
     char *line;
-    line = readline("> ");
+
+    // collect information for the shell prompt
+    char prompt[PROMPT_MAX_LEN];
+    char cwd_buf[MAXPATHLEN];
+
+    char *currentuser = getlogin();
+    getcwd(cwd_buf, MAXPATHLEN);
+    snprintf(prompt, PROMPT_MAX_LEN, "%s %s> ", currentuser, cwd_buf);
+
+    line = readline(prompt);
+
+    // line will return NULL on Ctrl+D (EOF)
+    if (line == NULL) {
+      putchar('\n');
+      exit(0);
+    }
 
     // Remove leading and trailing whitespace from the line
     stripwhite(line);
@@ -123,22 +185,12 @@ int main(void)
         printf("Parse ERROR\n");
       }
 
-      if (parse(line, &cmd) == 1) {
-        Pgm *p = cmd.pgm;
+      // recursively handle the desired programs to be executed
+      handle_pgm(cmd.pgm, 0);
 
-        if (p != NULL && p->pgmlist != NULL && p->pgmlist[0] != NULL) {
-          if (strcmp(p->pgmlist[0], "cd") == 0) {
-            builtin_cd(p->pgmlist);
-          }
-          else if (strcmp(p->pgmlist[0], "exit") == 0) {
-            builtin_exit();
-          }
-          else {
-            // recursively handle the desired programs to be executed
-            handle_pgm(p);
-          }
-        }
-      }
+      // reset the STDIN and STDOUT for this process
+      dup2(STDIN_ORIG, STDIN_FILENO);
+      dup2(STDOUT_ORIG, STDOUT_FILENO);
     }
 
     // Free the input buffer
