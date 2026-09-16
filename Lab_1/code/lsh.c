@@ -183,7 +183,7 @@ int main(void)
       // if we have a rstdin we copy that into the stdin_file
       if (cmd.rstdin != NULL){
         char* rstdin = cmd.rstdin;
-        int fd = open(rstdin, O_RDONLY);
+        int fd = open(rstdin, O_RDWR);
         if (fd < 0){
           err(EXIT_FAILURE, "stdin");
         }
@@ -195,7 +195,7 @@ int main(void)
       // if we have a rstdout we copy that into the stdout_file
       if (cmd.rstdout != NULL){
         char* rstdout = cmd.rstdout;
-        int fd = open(rstdout, O_WRONLY | O_CREAT);
+        int fd = open(rstdout, O_RDWR | O_CREAT);
         if (fd < 0){
           err(EXIT_FAILURE, "stdout");
         }
