@@ -25,6 +25,8 @@
 #include <signal.h>
 #include <readline/readline.h>
 #include <readline/history.h>
+#include <errno.h>
+#include <fcntl.h>
 
 #include <sys/param.h>
 #include <sys/types.h>
@@ -47,12 +49,118 @@ void stripwhite(char *);
 
 #define PIPE_READ 0
 #define PIPE_WRITE 1
+#define MAX_CHILDREN 20
 
-void sigint_handler(int _signal) {
-    // terminate the current child process instead of killing the shell
-    // we shouldn't need to actually do anything here, SIGINT should be
-    // passed along to all child processes so this empty handler will
-    // just simply ignore the SIGINT signal
+// structure for pids belonging to current command/pipeline
+typedef struct {
+  pid_t pids[MAX_CHILDREN];
+  size_t count;
+  pid_t pgid;
+} ChildList;
+
+static void ignore_sigint(void)
+{
+    struct sigaction action;
+
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = SIG_IGN;
+    sigemptyset(&action.sa_mask);
+
+    if (sigaction(SIGINT, &action, NULL) == -1) {
+        err(EXIT_FAILURE, "sigaction(SIGINT)");
+    }
+}
+
+static void sigchld_handler(int signal_number)
+{
+    int saved_errno = errno;
+
+    (void)signal_number;
+
+    while (waitpid(-1, NULL, WNOHANG) > 0) {
+        // reap every child that has already terminated
+    }
+
+    errno = saved_errno;
+}
+
+static void install_sigchld_handler(void)
+{
+    struct sigaction action;
+
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = sigchld_handler;
+    sigemptyset(&action.sa_mask);
+
+    /*
+     * restart readline and other interrupted system calls where possible
+     * do not receive notifications merely because a child stopped
+     */
+    action.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+
+    if (sigaction(SIGCHLD, &action, NULL) == -1) {
+        err(EXIT_FAILURE, "sigaction(SIGCHLD)");
+    }
+}
+
+static void wait_for_children(const ChildList *children)
+{
+    for (size_t i = 0; i < children->count; i++) {
+        pid_t result;
+
+        do {
+            result = waitpid(children->pids[i], NULL, 0);
+        } while (result == -1 && errno == EINTR);
+
+        /*
+         * the SIGCHLD handler may already have reaped this child
+         * in that case, ECHILD is acceptable
+         */
+        if (result == -1 && errno != ECHILD) {
+            perror("waitpid");
+        }
+    }
+}
+
+static void apply_redirection(const Command *cmd)
+{
+    int fd;
+
+    // if we have a rstdin we copy that into the stdin_file
+    if (cmd->rstdin != NULL) {
+        fd = open(cmd->rstdin, O_RDONLY);
+
+        if (fd == -1) {
+            perror(cmd->rstdin);
+            _exit(127);
+        }
+
+        if (dup2(fd, STDIN_FILENO) == -1) {
+            perror("dup2");
+            _exit(127);
+        }
+
+        close(fd);
+    }
+
+    // if we have a rstdout we copy that into the stdout_file
+    if (cmd->rstdout != NULL) {
+        fd = open(cmd->rstdout,
+                  O_WRONLY | O_CREAT | O_TRUNC,
+                  0666);
+
+        if (fd == -1) {
+            perror(cmd->rstdout);
+            _exit(127);
+        }
+
+        if (dup2(fd, STDOUT_FILENO) == -1) {
+            perror("dup2");
+            _exit(127);
+        }
+
+        close(fd);
+    }
 }
 
 void _close(int fd) {
@@ -61,7 +169,8 @@ void _close(int fd) {
     }
 }
 
-int handle_pgm(Pgm *prog, int cmd_idx) {
+int handle_pgm(Pgm *prog, int cmd_idx, Command *cmd, ChildList *children) {
+    int background = cmd->background;
     int pipefd[2];
     if (prog == NULL)
     {
@@ -70,15 +179,14 @@ int handle_pgm(Pgm *prog, int cmd_idx) {
     else
     {
         // recurse and call the next program which would be the process piping in information to this one
-        int this_cmd_idx = handle_pgm(prog->next, cmd_idx + 1);
+        int this_cmd_idx = handle_pgm(prog->next, cmd_idx + 1, cmd, children);
 
         char** pgmlist = prog->pgmlist;
-        char* cmd = pgmlist[0];
+        char* command_name = pgmlist[0];
         const char* target = pgmlist[1];
 
         // check for built-ins
-        if (strcmp("cd", cmd) == 0) {
-          // cd without an argument should redirect to HOME
+        if (strcmp("cd", command_name) == 0) {
           if (target == NULL) {
             target = getenv("HOME");
             if (target == NULL) {
@@ -87,11 +195,9 @@ int handle_pgm(Pgm *prog, int cmd_idx) {
             }
           }
           chdir(target); // NOTE: pgmlist is a buffer of 50 so we are safe to check index 1 here
+        } else if (strcmp("exit", command_name) == 0) {
+          exit(0);
         }
-        else if (strcmp("exit", cmd) == 0) {
-            exit(0);
-        }
-
         // run the desired command that isn't a shell built-in
         else {
             // we only want to create a pipe if we are not the last command in the list
@@ -108,6 +214,25 @@ int handle_pgm(Pgm *prog, int cmd_idx) {
             }
             // Child Process
             else if (p == 0) {
+
+                struct sigaction default_action;
+
+                memset(&default_action, 0, sizeof(default_action));
+                default_action.sa_handler = SIG_DFL;
+                sigemptyset(&default_action.sa_mask);
+
+                if (sigaction(SIGINT, &default_action, NULL) == -1) {
+                  perror("sigaction(SIGINT)");
+                  _exit(127);
+                }
+
+                // set the process group id to move this process into a different group that will be in the background
+                if (background){
+                    if (setpgid(0, 0) == -1) {
+                      perror("setpgid");
+                      _exit(127);
+                    }
+                }
                 // close read end of the pipe
                 if (this_cmd_idx > 1) {
                     _close(pipefd[PIPE_READ]);
@@ -116,11 +241,22 @@ int handle_pgm(Pgm *prog, int cmd_idx) {
                     _close(pipefd[PIPE_WRITE]);
                 }
 
+                apply_redirection(cmd);
+
                 // call the desired command in a child process with the desired arguments
-                execvp(cmd, pgmlist);
+                execvp(command_name, pgmlist);
+
+                perror(command_name);
+                _exit(127);
             }
             // Parent Process (we will be reading data from the spawned process here)
             else {
+                if (children->count >= MAX_CHILDREN) {
+                  errx(EXIT_FAILURE, "too many child processes");
+                }
+
+                children->pids[children->count++] = p;
+
                 // close write end of the pipe
                 if (this_cmd_idx > 1) {
                     _close(pipefd[PIPE_WRITE]);
@@ -128,7 +264,6 @@ int handle_pgm(Pgm *prog, int cmd_idx) {
                         err(EXIT_FAILURE, "dup2");
                     _close(pipefd[PIPE_READ]);
                 }
-                wait(NULL);
             }
         }
     }
@@ -139,7 +274,10 @@ int handle_pgm(Pgm *prog, int cmd_idx) {
 int main(void)
 {
   // setup signal handlers
-  signal(SIGINT, sigint_handler);
+  // signal(SIGINT, sigint_handler);
+
+  ignore_sigint();
+  install_sigchld_handler();
 
   // keep track of the initial STDIN and STDOUT file descriptors
   int STDIN_ORIG, STDOUT_ORIG;
@@ -178,19 +316,37 @@ int main(void)
       if (parse(line, &cmd) == 1)
       {
         // Print the parsed command
-        print_cmd(&cmd);
+        //print_cmd(&cmd);
       }
       else
       {
         printf("Parse ERROR\n");
       }
 
+      ChildList children = {
+        .count = 0,
+        .pgid = 0
+      };
+
       // recursively handle the desired programs to be executed
-      handle_pgm(cmd.pgm, 0);
+      handle_pgm(cmd.pgm, 0, &cmd, &children);
+
+      if (!cmd.background) {
+        wait_for_children(&children);
+
+      }
+
+      if (dup2(STDIN_ORIG, STDIN_FILENO) == -1) {
+        err(EXIT_FAILURE, "dup2(STDIN_ORIG)");
+      }
+
+      if (dup2(STDOUT_ORIG, STDOUT_FILENO) == -1) {
+        err(EXIT_FAILURE, "dup2(STDOUT_ORIG)");
+      }
 
       // reset the STDIN and STDOUT for this process
-      dup2(STDIN_ORIG, STDIN_FILENO);
-      dup2(STDOUT_ORIG, STDOUT_FILENO);
+      //dup2(STDIN_ORIG, STDIN_FILENO);
+      //dup2(STDOUT_ORIG, STDOUT_FILENO);
     }
 
     // Free the input buffer
