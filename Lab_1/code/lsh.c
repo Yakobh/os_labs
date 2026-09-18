@@ -150,7 +150,7 @@ static void apply_redirection(const Command *cmd)
     if (cmd->rstdout != NULL) {
         fd = open(cmd->rstdout,
                   O_WRONLY | O_CREAT | O_TRUNC,
-                  0666);
+                  S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
         if (fd == -1) {
             perror(cmd->rstdout);
@@ -268,9 +268,6 @@ int handle_pgm(Pgm *prog, int cmd_idx, Command *cmd, ChildList *children) {
                         err(EXIT_FAILURE, "dup2");
                     _close(pipefd[PIPE_READ]);
                 }
-
-                if (!background)
-                    wait(NULL);
             }
         }
     }
