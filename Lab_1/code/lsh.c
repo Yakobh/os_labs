@@ -52,6 +52,8 @@ void stripwhite(char *);
 #define MAX_CHILDREN 20
 
 // structure for pids belonging to current command/pipeline
+// we want to make sure that every process in the pipeline runs before we block
+// for example, 'grep hej | ls' should still execute 'ls'.
 typedef struct {
   pid_t pids[MAX_CHILDREN];
   size_t count;
@@ -78,7 +80,7 @@ static void sigchld_handler(int signal_number)
     (void)signal_number;
 
     while (waitpid(-1, NULL, WNOHANG) > 0) {
-        // reap every child that has already terminated
+        // reap every child that has already terminated, preventing zombies
     }
 
     errno = saved_errno;
@@ -336,7 +338,8 @@ int main(void)
 
       }
 
-      if (dup2(STDIN_ORIG, STDIN_FILENO) == -1) {
+      // reset the STDIN and STDOUT for this process
+      if (dup2(STDIN_ORIG, STDIN_FILENO) == -1) { // is this necessary?
         err(EXIT_FAILURE, "dup2(STDIN_ORIG)");
       }
 
@@ -344,7 +347,6 @@ int main(void)
         err(EXIT_FAILURE, "dup2(STDOUT_ORIG)");
       }
 
-      // reset the STDIN and STDOUT for this process
       //dup2(STDIN_ORIG, STDIN_FILENO);
       //dup2(STDOUT_ORIG, STDOUT_FILENO);
     }
