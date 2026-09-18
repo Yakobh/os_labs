@@ -268,7 +268,7 @@ int handle_pgm(Pgm *prog, int cmd_idx, Command *cmd, ChildList *children) {
                         err(EXIT_FAILURE, "dup2");
                     _close(pipefd[PIPE_READ]);
                 }
-              
+
                 if (!background)
                     wait(NULL);
             }
@@ -285,11 +285,6 @@ int main(void)
 
   ignore_sigint();
   install_sigchld_handler();
-
-  // keep track of the initial STDIN and STDOUT file descriptors
-  int STDIN_ORIG, STDOUT_ORIG;
-  STDIN_ORIG = dup(STDIN_FILENO);
-  STDOUT_ORIG = dup(STDOUT_FILENO);
 
   // keep track of the initial STDIN and STDOUT file descriptors
   int STDIN_ORIG, STDOUT_ORIG;
@@ -339,7 +334,7 @@ int main(void)
         .count = 0,
         .pgid = 0
       };
-      
+
       // if we have a rstdin we copy that into the stdin_file
       if (cmd.rstdin != NULL){
         char* rstdin = cmd.rstdin;
@@ -365,8 +360,8 @@ int main(void)
       }
 
       // recursively handle the desired programs to be executed
-      handle_pgm(cmd.pgm, 0, &cmd);
-      
+      handle_pgm(cmd.pgm, 0, &cmd, &children);
+
       if (!cmd.background) {
         wait_for_children(&children);
       }
