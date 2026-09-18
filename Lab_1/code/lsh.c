@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <fcntl.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 
@@ -177,6 +178,30 @@ int main(void)
       else
       {
         printf("Parse ERROR\n");
+      }
+
+      // if we have a rstdin we copy that into the stdin_file
+      if (cmd.rstdin != NULL){
+        char* rstdin = cmd.rstdin;
+        int fd = open(rstdin, O_RDONLY);
+        if (fd < 0){
+          err(EXIT_FAILURE, "stdin");
+        }
+        if (dup2(fd, STDIN_FILENO) == -1)
+                err(EXIT_FAILURE, "dup2");
+        _close(fd);
+      }
+
+      // if we have a rstdout we copy that into the stdout_file
+      if (cmd.rstdout != NULL){
+        char* rstdout = cmd.rstdout;
+        int fd = open(rstdout, O_WRONLY | O_CREAT);
+        if (fd < 0){
+          err(EXIT_FAILURE, "stdout");
+        }
+        if (dup2(fd, STDOUT_FILENO) == -1)
+                err(EXIT_FAILURE, "dup2");
+        _close(fd);
       }
 
       // recursively handle the desired programs to be executed
