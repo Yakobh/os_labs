@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <fcntl.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 #include <errno.h>
@@ -200,6 +201,7 @@ int handle_pgm(Pgm *prog, int cmd_idx, Command *cmd, ChildList *children) {
         } else if (strcmp("exit", command_name) == 0) {
           exit(0);
         }
+
         // run the desired command that isn't a shell built-in
         else {
             // we only want to create a pipe if we are not the last command in the list
@@ -216,7 +218,6 @@ int handle_pgm(Pgm *prog, int cmd_idx, Command *cmd, ChildList *children) {
             }
             // Child Process
             else if (p == 0) {
-
                 struct sigaction default_action;
 
                 memset(&default_action, 0, sizeof(default_action));
@@ -234,6 +235,7 @@ int handle_pgm(Pgm *prog, int cmd_idx, Command *cmd, ChildList *children) {
                       perror("setpgid");
                       _exit(127);
                     }
+
                 }
                 // close read end of the pipe
                 if (this_cmd_idx > 1) {
@@ -266,6 +268,9 @@ int handle_pgm(Pgm *prog, int cmd_idx, Command *cmd, ChildList *children) {
                         err(EXIT_FAILURE, "dup2");
                     _close(pipefd[PIPE_READ]);
                 }
+              
+                if (!background)
+                    wait(NULL);
             }
         }
     }
@@ -280,6 +285,11 @@ int main(void)
 
   ignore_sigint();
   install_sigchld_handler();
+
+  // keep track of the initial STDIN and STDOUT file descriptors
+  int STDIN_ORIG, STDOUT_ORIG;
+  STDIN_ORIG = dup(STDIN_FILENO);
+  STDOUT_ORIG = dup(STDOUT_FILENO);
 
   // keep track of the initial STDIN and STDOUT file descriptors
   int STDIN_ORIG, STDOUT_ORIG;
@@ -329,26 +339,47 @@ int main(void)
         .count = 0,
         .pgid = 0
       };
+      
+      // if we have a rstdin we copy that into the stdin_file
+      if (cmd.rstdin != NULL){
+        char* rstdin = cmd.rstdin;
+        int fd = open(rstdin, O_RDONLY);
+        if (fd < 0){
+          err(EXIT_FAILURE, "stdin");
+        }
+        if (dup2(fd, STDIN_FILENO) == -1)
+                err(EXIT_FAILURE, "dup2");
+        _close(fd);
+      }
+
+      // if we have a rstdout we copy that into the stdout_file
+      if (cmd.rstdout != NULL){
+        char* rstdout = cmd.rstdout;
+        int fd = open(rstdout, O_WRONLY | O_CREAT);
+        if (fd < 0){
+          err(EXIT_FAILURE, "stdout");
+        }
+        if (dup2(fd, STDOUT_FILENO) == -1)
+                err(EXIT_FAILURE, "dup2");
+        _close(fd);
+      }
 
       // recursively handle the desired programs to be executed
-      handle_pgm(cmd.pgm, 0, &cmd, &children);
-
+      handle_pgm(cmd.pgm, 0, &cmd);
+      
       if (!cmd.background) {
         wait_for_children(&children);
-
       }
 
       // reset the STDIN and STDOUT for this process
-      if (dup2(STDIN_ORIG, STDIN_FILENO) == -1) { // is this necessary?
+      // reset the STDIN and STDOUT for this process
+      if (dup2(STDIN_ORIG, STDIN_FILENO) == -1) {
         err(EXIT_FAILURE, "dup2(STDIN_ORIG)");
       }
 
       if (dup2(STDOUT_ORIG, STDOUT_FILENO) == -1) {
         err(EXIT_FAILURE, "dup2(STDOUT_ORIG)");
       }
-
-      //dup2(STDIN_ORIG, STDIN_FILENO);
-      //dup2(STDOUT_ORIG, STDOUT_FILENO);
     }
 
     // Free the input buffer
