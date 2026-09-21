@@ -51,15 +51,38 @@ void stripwhite(char *);
 #define PIPE_READ 0
 #define PIPE_WRITE 1
 #define MAX_CHILDREN 1000
+#define MAX_BG_JOBS 1000
 
 // structure for pids belonging to current command/pipeline
 // we want to make sure that every process in the pipeline runs before we block
 // for example, 'grep hej | ls' should still execute 'ls'.
+// NOTE: we are just going to use static arrays here for simplicity sake instead of building out a linked list
 typedef struct {
   pid_t pids[MAX_CHILDREN];
   size_t count;
   pid_t pgid;
 } ChildList;
+
+struct PidNode{
+   pid_t pid;
+   int completed;
+   char *job_name;
+   struct PidNode *next;
+};
+
+typedef struct {
+    struct PidNode *pids;
+    int idx;
+} BGJob;
+
+typedef struct {
+    BGJob jobs[MAX_BG_JOBS];
+    int count;
+} BGJobList;
+
+BGJobList bg_jobs = {
+    .count = 0,
+};
 
 static void ignore_sigint(void)
 {
@@ -80,8 +103,67 @@ static void sigchld_handler(int signal_number)
 
     (void)signal_number;
 
-    while (waitpid(-1, NULL, WNOHANG) > 0) {
+    int child_pid = waitpid(-1, NULL, WNOHANG);
+    while (child_pid > 0) {
+        // also print out the pid of the job that terminated to be in alignment
+        // with common terminals
+        for (int i = 0; i < bg_jobs.count; i++) {
+            BGJob job = bg_jobs.jobs[i];
+
+            // traverse the linked list for the processes in this list
+            struct PidNode *pid_node = job.pids;
+            int all_completed = 1;
+            int pid_found = 0;
+
+            while (pid_node != NULL) {
+                if (child_pid == pid_node->pid) {
+                    pid_node->completed = 1;
+                    pid_found = 1;
+                }
+                if (!pid_node->completed) {
+                    all_completed = 0;
+                }
+                pid_node = pid_node->next;
+            }
+
+            // Go through and pretty print the completed jobs along with their pids
+            if (all_completed && pid_found) {
+                // only decrement when all forked bg jobs are complete for this job pipeline
+                bg_jobs.count--;
+                bg_jobs.jobs[i].idx = 0;
+
+                pid_node = job.pids;
+                printf("\n[%d] -\t %d done \t%s", job.idx, pid_node->pid, pid_node->job_name);
+                if (pid_node != NULL && pid_node->next) {
+                    printf(" |\n");
+                    pid_node = pid_node->next;
+                    while (pid_node) {
+                        printf("\t %d done \t%s", pid_node->pid, pid_node->job_name);
+                        if (pid_node->next)
+                            printf(" |\n");
+                        else
+                            printf("\n");
+                        pid_node = pid_node->next;
+                    }
+                }
+                else
+                    printf("\n");
+
+                // Free allocated memory
+                pid_node = job.pids;
+                while (pid_node != NULL)
+                {
+                    struct PidNode *next = pid_node->next;
+                    free(pid_node);
+                    pid_node = next;
+                }
+                bg_jobs.jobs[i].pids = NULL;
+                break;
+            }
+        }
+
         // reap every child that has already terminated, preventing zombies
+        child_pid = waitpid(-1, NULL, WNOHANG);
     }
 
     errno = saved_errno;
@@ -179,6 +261,8 @@ int handle_pgm(Pgm *prog, int cmd_idx, Command *cmd, ChildList *children) {
     int pipefd[2];
     if (prog == NULL)
     {
+      if (background)
+          printf("[%d]", bg_jobs.count + 1);
       return cmd_idx;
     }
     else
@@ -229,18 +313,16 @@ int handle_pgm(Pgm *prog, int cmd_idx, Command *cmd, ChildList *children) {
                 sigemptyset(&default_action.sa_mask);
 
                 if (sigaction(SIGINT, &default_action, NULL) == -1) {
-                  perror("sigaction(SIGINT)");
-                  _exit(127);
+                    perror("sigaction(SIGINT)");
                 }
 
                 // set the process group id to move this process into a different group that will be in the background
                 if (background){
                     if (setpgid(0, 0) == -1) {
                       perror("setpgid");
-                      _exit(127);
                     }
-
                 }
+
                 // close read end of the pipe
                 if (this_cmd_idx > 1) {
                     _close(pipefd[PIPE_READ]);
@@ -261,7 +343,41 @@ int handle_pgm(Pgm *prog, int cmd_idx, Command *cmd, ChildList *children) {
                   errx(EXIT_FAILURE, "too many child processes");
                 }
 
+                // keep track of the children we spawned
                 children->pids[children->count++] = p;
+
+                // also keep track if we are a background job
+                // insert this pid into the first slot with 0
+                if (background){
+                    // print out the pid of this background job
+                    printf(" %d", p);
+
+                    // create a new node to add to the list
+                    struct PidNode *pid_node = (struct PidNode *)malloc(sizeof(struct PidNode));
+                    pid_node->completed = 0;
+                    pid_node->job_name = pgmlist[0];
+                    pid_node->pid = p;
+
+                    // insert the pid into the linked list
+                    for (int i = 0; i <= bg_jobs.count; i++) {
+                        if (bg_jobs.jobs[i].idx == 0) {
+                            struct PidNode *pid_head = bg_jobs.jobs[i].pids;
+                            if (pid_head == NULL)
+                                bg_jobs.jobs[i].pids = pid_node;
+                            else {
+                                while (pid_head != NULL) {
+                                    if (pid_head->next == NULL) {
+                                        pid_head->next = pid_node;
+                                        pid_head = NULL;
+                                    }
+                                    else
+                                        pid_head = pid_head->next;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
 
                 // close write end of the pipe
                 if (this_cmd_idx > 1) {
@@ -269,6 +385,16 @@ int handle_pgm(Pgm *prog, int cmd_idx, Command *cmd, ChildList *children) {
                     if (dup2(pipefd[PIPE_READ], STDIN_FILENO) == -1)
                         err(EXIT_FAILURE, "dup2");
                     _close(pipefd[PIPE_READ]);
+                }
+                else if (background) {
+                    for (int i = 0; i <= bg_jobs.count; i++) {
+                        if (bg_jobs.jobs[i].idx == 0) {
+                            bg_jobs.jobs[i].idx = ++bg_jobs.count;
+                            break;
+                        }
+                    }
+                    // cap off the background pid printing with a newline
+                    printf("\n");
                 }
             }
         }
@@ -279,9 +405,13 @@ int handle_pgm(Pgm *prog, int cmd_idx, Command *cmd, ChildList *children) {
 
 int main(void)
 {
-  // setup signal handlers
-  // signal(SIGINT, sigint_handler);
+  // initialize the background jobs
+  for (int i = 0; i < MAX_BG_JOBS; i++) {
+      bg_jobs.jobs[i].idx = 0;
+      bg_jobs.jobs[i].pids = NULL;
+  }
 
+  // setup signal handlers
   ignore_sigint();
   install_sigchld_handler();
 
