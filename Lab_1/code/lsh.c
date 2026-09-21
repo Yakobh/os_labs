@@ -197,7 +197,9 @@ int handle_pgm(Pgm *prog, int cmd_idx, Command *cmd, ChildList *children) {
               return 1;
             }
           }
-          chdir(target); // NOTE: pgmlist is a buffer of 50 so we are safe to check index 1 here
+          if (chdir(target) != 0) {
+              perror("cd");
+          }
         } else if (strcmp("exit", command_name) == 0) {
           exit(0);
         }
