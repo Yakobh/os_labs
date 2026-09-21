@@ -39,8 +39,8 @@
 
 #include "parse.h"
 
-static void print_cmd(Command *cmd);
-static void print_pgm(Pgm *p);
+//static void print_cmd(Command *cmd);
+//static void print_pgm(Pgm *p);
 void stripwhite(char *);
 
 // Helpful constants
@@ -50,7 +50,7 @@ void stripwhite(char *);
 
 #define PIPE_READ 0
 #define PIPE_WRITE 1
-#define MAX_CHILDREN 20
+#define MAX_CHILDREN 1000
 
 // structure for pids belonging to current command/pipeline
 // we want to make sure that every process in the pipeline runs before we block
@@ -360,7 +360,6 @@ int main(void)
  * Print a Command structure as returned by parse on stdout.
  *
  * Helper function, no need to change. Might be useful to study as inspiration.
- */
 static void print_cmd(Command *cmd_list)
 {
   printf("------------------------------\n");
@@ -372,11 +371,11 @@ static void print_cmd(Command *cmd_list)
   print_pgm(cmd_list->pgm);
   printf("------------------------------\n");
 }
+*/
 
 /* Print a linked list of Pgm structures.
  *
  * Helper function, no need to change. It may be useful to study for inspiration.
- */
 static void print_pgm(Pgm *p)
 {
   if (p == NULL)
@@ -387,9 +386,8 @@ static void print_pgm(Pgm *p)
   {
     char **pl = p->pgmlist;
 
-    /* The list is stored in reverse order, so print
-     * it in reverse to restore the original order.
-     */
+    // The list is stored in reverse order, so print
+    // it in reverse to restore the original order.
     print_pgm(p->next);
     printf("            * [ ");
     while (*pl)
@@ -400,6 +398,7 @@ static void print_pgm(Pgm *p)
   }
 }
 
+*/
 
 /* Strip whitespace from the start and end of a string.
  *
