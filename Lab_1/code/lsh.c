@@ -125,7 +125,7 @@ static void wait_for_children(const ChildList *children)
     }
 }
 
-static void apply_redirection(const Command *cmd)
+static int apply_redirection(const Command *cmd)
 {
     int fd;
 
@@ -135,12 +135,12 @@ static void apply_redirection(const Command *cmd)
 
         if (fd == -1) {
             perror(cmd->rstdin);
-            _exit(127);
+            return fd;
         }
 
         if (dup2(fd, STDIN_FILENO) == -1) {
             perror("dup2");
-            _exit(127);
+            return fd;
         }
 
         close(fd);
@@ -154,16 +154,18 @@ static void apply_redirection(const Command *cmd)
 
         if (fd == -1) {
             perror(cmd->rstdout);
-            _exit(127);
+            return fd;
         }
 
         if (dup2(fd, STDOUT_FILENO) == -1) {
             perror("dup2");
-            _exit(127);
+            return fd;
         }
 
         close(fd);
     }
+
+    return 0;
 }
 
 void _close(int fd) {
@@ -333,11 +335,12 @@ int main(void)
       };
 
       // recursively handle the desired programs to be executed
-      apply_redirection(&cmd);
-      handle_pgm(cmd.pgm, 0, &cmd, &children);
+      if (!apply_redirection(&cmd)) {
+          handle_pgm(cmd.pgm, 0, &cmd, &children);
 
-      if (!cmd.background) {
-        wait_for_children(&children);
+          if (!cmd.background) {
+            wait_for_children(&children);
+          }
       }
 
       // reset the STDIN and STDOUT for this process
