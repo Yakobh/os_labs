@@ -90,11 +90,9 @@ timer_elapsed (int64_t then)
 void
 timer_sleep (int64_t ticks)
 {
+  enum intr_level old_level = intr_disable ();
   int64_t start = timer_ticks ();
 
-  ASSERT (intr_get_level () == INTR_ON);
-
-  enum intr_level old_level = intr_disable ();
   struct thread *t = thread_current();
   t->ticks_start = start;
   t->ticks_duration = ticks;
@@ -174,9 +172,11 @@ timer_print_stats (void)
 }
 
 void foreach_loop(struct thread* t, void* aux){
-  if (t->status == THREAD_BLOCKED && timer_elapsed (t->ticks_start) >= t->ticks_duration){
-    thread_unblock(t);
+  enum intr_level old_level = intr_disable ();
+  if (t && t->status == THREAD_BLOCKED && timer_elapsed (t->ticks_start) >= t->ticks_duration){
+	thread_unblock(t);
   }
+  intr_set_level (old_level);
 }
 
 /* Timer interrupt handler. */
