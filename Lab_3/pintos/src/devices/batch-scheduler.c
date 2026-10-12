@@ -76,13 +76,14 @@ static void transfer_data (const task_t *task);
 /* Releases the slot */
 static void release_slot (const task_t *task);
 
-struct condition* cond_waiting_priority[2];
-struct condition* cond_waiting[2];
+struct condition cond_waiting_priority[2];
+struct condition cond_waiting[2];
 uint32_t active_tasks;
 uint32_t prio_waiting[2] = {0};
 uint32_t waiting[2] = {0};
-struct lock* bridge_lock;
+struct lock bridge_lock;
 direction_t curr_direction;
+
 void init_bus (void) {
 
   random_init ((unsigned int)123456789);
@@ -90,12 +91,12 @@ void init_bus (void) {
   /* TODO: Initialize global/static variables,
      e.g. your condition variables, locks, counters etc */
   active_tasks = 0;
-  cond_init (cond_waiting_priority[0]);
-  cond_init (cond_waiting_priority[1]);
-  cond_init (cond_waiting[0]);
-  cond_init (cond_waiting[1]);
+  cond_init (&cond_waiting_priority[0]);
+  cond_init (&cond_waiting_priority[1]);
+  cond_init (&cond_waiting[0]);
+  cond_init (&cond_waiting[1]);
 
-  lock_init (bridge_lock);
+  lock_init (&bridge_lock);
   curr_direction = SEND; // set arbitrary direction
 }
 
@@ -204,7 +205,7 @@ void get_slot (const task_t *task) {
    * even if there are priority tasks of the other direction waiting
    */
   // acquire lock
-  lock_acquire(bridge_lock);
+  lock_acquire(&bridge_lock);
 
   // wait until these conditions are done
   while (active_tasks >= BUS_CAPACITY ||
@@ -214,22 +215,22 @@ void get_slot (const task_t *task) {
      if (task->priority == PRIORITY)
      {
          prio_waiting[task->direction]++;
-         cond_wait(cond_waiting_priority[task->direction], bridge_lock);
+         cond_wait(&cond_waiting_priority[task->direction], &bridge_lock);
          prio_waiting[task->direction]--;
      }
      else
      {
          waiting[task->direction]++;
-         cond_wait(cond_waiting[task->direction], bridge_lock);
+         cond_wait(&cond_waiting[task->direction], &bridge_lock);
          waiting[task->direction]--;
      }
   }
 
   active_tasks++;
-  curr_direction == task->direction;
+  curr_direction = task->direction;
 
   // Release lock
-  lock_release(bridge_lock);
+  lock_release(&bridge_lock);
 }
 
 void transfer_data (const task_t *task) {
@@ -244,33 +245,33 @@ void release_slot (const task_t *task) {
    *       - Do you need to increment/decrement any counter?
    */
   // acquire lock
-  lock_acquire(bridge_lock);
+  lock_acquire(&bridge_lock);
   active_tasks--;
 
   // if there are high priority tasks going in the same direction, schedule those first
   if (prio_waiting[task->direction])
   {
-      cond_signal(cond_waiting_priority[task->direction], bridge_lock);
+      cond_signal(&cond_waiting_priority[task->direction], &bridge_lock);
   }
   // otherwise check if there are any high priority tasks going in the other direction
   else if (prio_waiting[other_direction(task->direction)])
   {
       if (active_tasks == 0)
       {
-          cond_broadcast(cond_waiting_priority[other_direction(task->direction)], bridge_lock);
+          cond_broadcast(&cond_waiting_priority[other_direction(task->direction)], &bridge_lock);
       }
   }
   // otherwise check if there are normal tasks that need to run in this direction
   else if (waiting[task->direction])
   {
-      cond_signal(cond_waiting[task->direction], bridge_lock);
+      cond_signal(&cond_waiting[task->direction], &bridge_lock);
   }
   // lastly, run normal tasks going the other way if no more tasks going this direction are ready
   else if (!active_tasks)
   {
-      cond_broadcast(cond_waiting_priority[other_direction(task->direction)], bridge_lock);
+      cond_broadcast(&cond_waiting_priority[other_direction(task->direction)], &bridge_lock);
   }
 
   // release lock
-  lock_release(bridge_lock);
+  lock_release(&bridge_lock);
 }
