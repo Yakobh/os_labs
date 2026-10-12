@@ -256,7 +256,7 @@ void release_slot (const task_t *task) {
   // otherwise check if there are any high priority tasks going in the other direction
   else if (prio_waiting[other_direction(task->direction)])
   {
-      if (active_tasks == 0)
+      if (!active_tasks)
       {
           cond_broadcast(&cond_waiting_priority[other_direction(task->direction)], &bridge_lock);
       }
@@ -269,7 +269,7 @@ void release_slot (const task_t *task) {
   // lastly, run normal tasks going the other way if no more tasks going this direction are ready
   else if (!active_tasks)
   {
-      cond_broadcast(&cond_waiting_priority[other_direction(task->direction)], &bridge_lock);
+      cond_broadcast(&cond_waiting[other_direction(task->direction)], &bridge_lock);
   }
 
   // release lock
