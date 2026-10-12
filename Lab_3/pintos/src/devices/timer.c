@@ -90,12 +90,14 @@ timer_elapsed (int64_t then)
 void
 timer_sleep (int64_t ticks)
 {
-  enum intr_level old_level = intr_disable ();
   int64_t start = timer_ticks ();
+  ASSERT (intr_get_level () == INTR_ON);
+
+  enum intr_level old_level = intr_disable ();
 
   struct thread *t = thread_current ();
-  t->ticks_start = start;
-  t->ticks_duration = ticks;
+  t->end_time = start + ticks;
+  t->sleeping = 1;
 
   thread_block();
   intr_set_level (old_level);
@@ -171,28 +173,29 @@ timer_print_stats (void)
   printf ("Timer: %"PRId64" ticks\n", timer_ticks ());
 }
 
-/* Unblocks thread t if it has expired.  Interrupts must 
-   be turned off. */        
-void 
+/* Unblocks thread t if it has expired.  Interrupts must
+   be turned off. */
+static void
 unblock_expired_thread (struct thread* t, void* aux)
 {
-  enum intr_level old_level = intr_disable ();
-  if (t && t->status == THREAD_BLOCKED && 
-      timer_elapsed (t->ticks_start) >= t->ticks_duration)
+  if (t->sleeping && t->status == THREAD_BLOCKED && t->end_time != -1 && ticks >= t->end_time)
   {
+	t->end_time = -1;
+	t->sleeping = 0;
 	thread_unblock(t);
   }
-  intr_set_level (old_level);
 }
 
 /* Timer interrupt handler. */
 static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
+  //enum intr_level old_level = intr_disable ();
   ticks++;
   thread_tick ();
 
   thread_foreach (unblock_expired_thread, NULL);
+  //intr_set_level (old_level);
 }
 
 

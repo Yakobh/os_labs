@@ -100,10 +100,10 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
-    
+
     /* Owned by devices/timer.c */
-    int64_t ticks_start;		/* Tick thread was blocked */
-    int64_t ticks_duration;		/* Duration thread is blocked (in ticks) */
+    int64_t end_time;		/* Tick thread was blocked */
+    uint64_t sleeping;      /* Check if the thread was put to sleep */
   };
 
 /* If false (default), use round-robin scheduler.
