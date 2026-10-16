@@ -79,8 +79,8 @@ static void release_slot (const task_t *task);
 struct condition cond_waiting_priority[2];
 struct condition cond_waiting[2];
 uint32_t active_tasks;
-uint32_t prio_waiting[2] = {0};
-uint32_t waiting[2] = {0};
+uint32_t prio_waiting[NUM_OF_DIRECTIONS] = {0};
+uint32_t waiting[NUM_OF_DIRECTIONS] = {0};
 struct lock bridge_lock;
 direction_t curr_direction;
 
@@ -209,7 +209,11 @@ void get_slot (const task_t *task) {
 
   // wait until these conditions are done
   while (active_tasks >= BUS_CAPACITY ||
-		  (active_tasks > 0 && curr_direction == other_direction(task->direction)))
+    (active_tasks > 0 &&
+        curr_direction == other_direction(task->direction) &&
+        prio_waiting[other_direction(task->direction)]
+    )
+  )
   {
      // only here if there is space on the bus and we are in the same direction
      if (task->priority == PRIORITY)
